@@ -1,0 +1,129 @@
+name: Build TWRP for Xiaomi Civi 1S (zijin)
+
+on:
+  workflow_dispatch:
+    inputs:
+      MANIFEST_BRANCH:
+        description: 'TWRP Minimal Manifest 分支'
+        required: true
+        default: 'twrp-12.1'
+      DEVICE_TREE_URL:
+        description: '设备树 Git 仓库地址'
+        required: true
+        default: 'https://github.com/chilan666/android_device_xiaomi_zijin-twrp.git'
+      DEVICE_TREE_BRANCH:
+        description: '设备树分支（留空则拉取默认分支）'
+        required: false
+        default: ''
+      DEVICE_PATH:
+        description: '设备树放置路径'
+        required: true
+        default: 'device/xiaomi/zijin'
+      DEVICE_NAME:
+        description: '机型代号 (Codename)'
+        required: true
+        default: 'zijin'
+      BUILD_TARGET:
+        description: '编译目标（基于 redwood 的 Virtual A/B 机型通常为 bootimage）'
+        required: true
+        default: 'bootimage'
+        type: choice
+        options:
+          - bootimage
+          - recoveryimage
+          - vendorbootimage
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 检出当前工作流
+        uses: actions/checkout@v4
+
+      - name: 深度清理磁盘空间
+        run: |
+          echo "=== 正在清理 Runner 预装组件以释放空间 ==="
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+          sudo docker image prune --all --force
+          sudo swapoff -a
+          sudo rm -f /mnt/swapfile
+          df -h
+
+      - name: 配置 8GB 虚拟内存 (Swap)
+        run: |
+          echo "=== 开启 Swap 防止 C++ 编译时内存溢出 ==="
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      - name: 安装 AOSP 编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y git-core gnupg flex bison build-essential zip curl zlib1g-dev \
+          libc6-dev-i386 libncurses-dev x11proto-core-dev libx11-dev \
+          lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig python3 \
+          python-is-python3 rsync libssl-dev bc
+
+      - name: 安装与配置 Repo 工具
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          sudo ln -sf ~/bin/repo /usr/local/bin/repo
+          git config --global user.name "GitHub Action Runner"
+          git config --global user.email "runner@github.com"
+
+      - name: 同步 TWRP Minimal 源码
+        run: |
+          mkdir -p twrp && cd twrp
+          repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b ${{ inputs.MANIFEST_BRANCH }}
+          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
+
+      - name: 拉取 zijin 设备树
+        run: |
+          cd twrp
+          BRANCH_PARAM=""
+          if [ -n "${{ inputs.DEVICE_TREE_BRANCH }}" ]; then
+            BRANCH_PARAM="-b ${{ inputs.DEVICE_TREE_BRANCH }}"
+          fi
+          git clone $BRANCH_PARAM ${{ inputs.DEVICE_TREE_URL }} ${{ inputs.DEVICE_PATH }}
+
+      - name: 执行编译
+        run: |
+          cd twrp
+          export ALLOW_MISSING_DEPENDENCIES=true
+          source build/envsetup.sh
+
+          # 自动匹配 lunch 目标（优先 twrp_zijin-eng，其次 omni_zijin-eng）
+          if lunch twrp_${{ inputs.DEVICE_NAME }}-eng 2>/dev/null; then
+            echo "已选择构建配置：twrp_${{ inputs.DEVICE_NAME }}-eng"
+          elif lunch omni_${{ inputs.DEVICE_NAME }}-eng 2>/dev/null; then
+            echo "已选择构建配置：omni_${{ inputs.DEVICE_NAME }}-eng"
+          else
+            echo "未能直接命中，正在从可用列表中查找..."
+            LUNCH_TARGET=$(lunch 2>&1 | grep -E "twrp_${{ inputs.DEVICE_NAME }}|omni_${{ inputs.DEVICE_NAME }}" | head -n 1 | awk '{print $1}')
+            lunch $LUNCH_TARGET
+          fi
+
+          # 启动编译
+          mka ${{ inputs.BUILD_TARGET }} -j$(nproc --all)
+
+      - name: 收集输出镜像
+        run: |
+          mkdir -p output_images
+          # 寻找编译生成的 .img 文件
+          find twrp/out/target/product/${{ inputs.DEVICE_NAME }}/ -maxdepth 1 -name "*.img" -exec cp {} output_images/ \;
+          echo "=== 已收集到的构建文件 ==="
+          ls -lh output_images/
+
+      - name: 上传构建产物 (Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: twrp-${{ inputs.DEVICE_NAME }}-${{ inputs.BUILD_TARGET }}
+          path: output_images/*
+          retention-days: 7
