@@ -14,7 +14,7 @@ on:
       DEVICE_TREE_BRANCH:
         description: '设备树分支（留空则拉取默认分支）'
         required: false
-        default: ''
+        default: 'android-13'
       DEVICE_PATH:
         description: '设备树放置路径'
         required: true
