@@ -10,7 +10,7 @@ on:
       DEVICE_TREE_URL:
         description: '设备树 Git 仓库地址'
         required: true
-        default: 'https://github.com/chilan666/android_device_xiaomi_zijin-twrp.git'
+        default: 'https://github.com/Nico6719/android_device_xiaomi_zijin-twrp.git'
       DEVICE_TREE_BRANCH:
         description: '设备树分支（留空则拉取默认分支）'
         required: false
