@@ -24,7 +24,7 @@ on:
         required: true
         default: 'zijin'
       BUILD_TARGET:
-        description: '编译目标（针对 zijin 请保持选择 vendorbootimage）'
+        description: '编译目标（zijin 请保持 vendorbootimage）'
         required: true
         default: 'vendorbootimage'
         type: choice
@@ -61,22 +61,13 @@ jobs:
           sudo swapon /swapfile
           free -h
 
-      - name: 安装 AOSP 编译依赖与 CCache
+      - name: 安装 AOSP 编译依赖
         run: |
           sudo apt update
           sudo apt install -y git-core gnupg flex bison build-essential zip curl zlib1g-dev \
             libc6-dev-i386 libncurses-dev x11proto-core-dev libx11-dev \
             lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig python3 \
-            python-is-python3 rsync libssl-dev bc ccache
-
-      - name: 挂载 CCache 云端持久化缓存
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: twrp-ccache-${{ inputs.DEVICE_NAME }}-${{ inputs.MANIFEST_BRANCH }}-${{ github.run_id }}
-          restore-keys: |
-            twrp-ccache-${{ inputs.DEVICE_NAME }}-${{ inputs.MANIFEST_BRANCH }}-
-            twrp-ccache-${{ inputs.DEVICE_NAME }}-
+            python-is-python3 rsync libssl-dev bc
 
       - name: 安装与配置 Repo 工具
         run: |
@@ -87,7 +78,7 @@ jobs:
           git config --global user.name "GitHub Action Runner"
           git config --global user.email "runner@github.com"
 
-      - name: 同步 TWRP Minimal 源码
+      - name: 同步 TWRP Minimal 源码 (浅克隆加速)
         run: |
           mkdir -p twrp && cd twrp
           repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b ${{ inputs.MANIFEST_BRANCH }}
@@ -100,25 +91,15 @@ jobs:
           if [ -n "${{ inputs.DEVICE_TREE_BRANCH }}" ]; then
             BRANCH_PARAM="-b ${{ inputs.DEVICE_TREE_BRANCH }}"
           fi
-          # 加入 --depth=1 减少设备树 Git 历史体积
           git clone --depth=1 $BRANCH_PARAM ${{ inputs.DEVICE_TREE_URL }} ${{ inputs.DEVICE_PATH }}
 
       - name: 执行编译
         run: |
           cd twrp
           export ALLOW_MISSING_DEPENDENCIES=true
-
-          # 启用并配置 CCache
-          export USE_CCACHE=1
-          export CCACHE_DIR=~/.ccache
-          export CCACHE_EXEC=$(which ccache)
-          ccache -M 10G
-          ccache -o compression=true
-          ccache -z
-
           source build/envsetup.sh
 
-          # 自动匹配 lunch 目标（优先 twrp_zijin-eng，其次 omni_zijin-eng）
+          # 自动匹配 lunch 目标
           if lunch twrp_${{ inputs.DEVICE_NAME }}-eng 2>/dev/null; then
             echo "已选择构建配置：twrp_${{ inputs.DEVICE_NAME }}-eng"
           elif lunch omni_${{ inputs.DEVICE_NAME }}-eng 2>/dev/null; then
@@ -132,13 +113,9 @@ jobs:
           # 启动编译
           mka ${{ inputs.BUILD_TARGET }} -j$(nproc --all)
 
-          echo "=== CCache 缓存命中统计 ==="
-          ccache -s
-
       - name: 收集输出镜像
         run: |
           mkdir -p output_images
-          # 寻找编译生成的 .img 文件
           find twrp/out/target/product/${{ inputs.DEVICE_NAME }}/ -maxdepth 1 -name "*.img" -exec cp {} output_images/ \;
           echo "=== 已收集到的构建文件 ==="
           ls -lh output_images/
