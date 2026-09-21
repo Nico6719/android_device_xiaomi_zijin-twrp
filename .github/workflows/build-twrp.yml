@@ -52,10 +52,10 @@ jobs:
           sudo rm -f /mnt/swapfile
           df -h
 
-      - name: 配置 8GB 虚拟内存 (Swap)
+      - name: 配置 16GB 虚拟内存 (Swap)
         run: |
-          echo "=== 开启 Swap 防止 C++ 编译时内存溢出 ==="
-          sudo fallocate -l 8G /swapfile
+          echo "=== 开启 16GB Swap 防止链接大库时内存溢出 ==="
+          sudo fallocate -l 16G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
@@ -110,8 +110,8 @@ jobs:
             lunch $LUNCH_TARGET
           fi
 
-          # 启动编译
-          mka ${{ inputs.BUILD_TARGET }} -j$(nproc --all)
+          # 启动编译（限定 2 线程避免链接大型动态库时击穿虚拟内存导致崩溃）
+          mka ${{ inputs.BUILD_TARGET }} -j2
 
       - name: 收集输出镜像
         run: |
